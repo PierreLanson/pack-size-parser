@@ -1,0 +1,9 @@
+# compiled output
+out/
+*.class
+
+# editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
