@@ -1,6 +1,13 @@
 # Pack Size Parser
 
-A Java transformation for **Informatica Cloud Data Integration (CDI)** that turns messy supplier pack-size text into numbers (conversion, base weight, total weight) and a standard pack size: `conversion x base_weight unit` for food products, or `1 x conversion` for non-food items sold by count. It then cross-checks every attribute that describes the same product's pack and flags rows where they disagree.
+A Java transformation for **Informatica Cloud Data Integration (CDI)** that turns messy supplier pack-size text into usable attributes to enable cross-supplier pricing.
+
+In short, it:
+
+1. reads messy free-text and structured pack-size attributes
+2. cleans them and standardises each to the same numeric fields, enabling comparison
+3. cross-checks that all the attributes are coherent, flagging any that mismatch
+4. outputs the clean fields for downstream analysis
 
 ## What is a pack size?
 
