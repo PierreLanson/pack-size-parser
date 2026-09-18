@@ -25,7 +25,7 @@ For example:
 
 ```
 
-Another supplier may be selling two packs of six cans (`2 x 6 x 33cl`), and a third as one case of twelve (`12 x 330ml`). These are different ways of writing the same thing; there are 12 total cans and each can is 330ml. Though they have different packing and use differing units (330ml vs 33cl vs 0.33l), you are getting the same number of cans with the same volume per can. Once they are standardised it is possible to compare across products and find the cheapest per 12x330ml (same number of cans and same volume per can), or even per 330ml can (same can volume but different numbers of cans), or per ml (not caring for packaging or base volume at all, e.g. against a 1l PET bottle).
+Another supplier may be selling two packs of six cans (`2 x 6 x 33cl`), and a third as one case of twelve (`12 x 330ml`). These are different ways of writing the same thing; there are 12 total cans and each can is 330ml. Though they have different packaging and use differing units (330ml vs 33cl vs 0.33l), you are getting the same number of cans with the same volume per can. Once they are standardised it is possible to compare across products and find the cheapest per 12x330ml (same number of cans and same volume per can), or even per 330ml can (same can volume but different numbers of cans), or per ml (not caring for packaging or base volume at all, e.g. against a 1l PET bottle).
 
 The list below shows some of the ways suppliers package or describe the same twelve cans; it is far from exhaustive.
 
