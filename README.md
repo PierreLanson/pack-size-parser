@@ -13,56 +13,104 @@ Built for a retail / food-service product master, where the same product can arr
 
 All four of those describe a pack, but nothing in the source data guarantees they describe the *same* pack. This code reads each one, standardises it, and reports whether they agree.
 
+## What is a pack size?
+
+Take twelve 330 ml cans of cola. A supplier physically packages those differently and it is written as an "outer pack size". This outer pack size is a description of the packaging and the contents. With twelve cans of 330ml cola there are multiple ways to package and therefore write a pack size.
+
+For example:
+
+```
+        pack size as written on the box:  3 x 4 x 0.33l describes 3 boxes of 4 cans, with each can being 330ml
+  ┌────────────────────── case: 3 boxes ──────────────────────┐
+  │   ┌─  box of 4 ─┐    ┌─  box of 4 ─┐    ┌─  box of 4 ─┐   │
+  │   │  ▢  ▢  ▢  ▢ │    │  ▢  ▢  ▢  ▢ │    │  ▢  ▢  ▢  ▢ │   │
+  │   └─────────────┘    └─────────────┘    └─────────────┘   │
+  └───────────────────────────────────────────────────────────┘
+
+```
+
+Another supplier may be selling two packs of six cans (`2 x 6 x 33cl`), and a third as one case of twelve (`12 x 330ml`). These are different ways of writing one thing; there are 12 total cans and each of the cans are 330ml. Though they are different packaging, you are getting the same products at the end of the day. The next step is to then be able to compare the prices between them and switch the supplier to the cheapest.
+
+```
+        conversion  = 12        (3 × 4, or 2 × 6, or 12; how many units in the outer)
+        base weight = 330 ml    (one unit, whatever unit of measure it was quoted in)
+        total       = 3960 ml   (conversion × base weight)
+        pack size   = 12x330ml
+```
+
+All of these reduce to `12x330ml`:
+
+```
+3 x 4 x 330ml     2 x 6 x 33cl      12 x 330ml        12x33cl           33cl x 12
+330ml x 12        3 x 4 x 0.33l     12 x 0.33 litre   case of 12 x 330ml
+```
+
+The packaging story isn't thrown away. The conversion parts output keeps the multipliers as found (`[3.0, 4.0]` for the first supplier, `[2.0, 6.0]` for the second), so anyone who needs to know how the outer is built up still can. The parts are deliberately *not* compared across sources when looking for mismatches (the check exists in the code but is commented out), because two sources describing different packaging for the same twelve units is not a data error.
+
+The same reduction is what makes validation possible. If the outer pack size column says `12x330ml` and the description says `cola 24 x 330ml`, those reduce to different conversions (12 vs 24) and totals (3960 vs 7920), and the row is flagged `MISMATCH (conversion, total_weight)` rather than silently trusting one column over the other.
+
 ## What it produces
 
-For each input row, the transformation outputs:
+The transformation doesn't just emit a pack-size string; it breaks a pack down into its parts and outputs each one, so downstream users can work with whichever piece they need:
 
-| Output port | Meaning | Example |
+- **conversion**: how many items are in the pack, e.g. 12 for a case of twelve.
+- **base weight**: the weight (or volume) of one item, standardised to `g`, `ml` or `min`.
+- **total weight**: conversion × base weight, the weight of the whole pack.
+- **pack size**: the three above combined as `{conversion}x{base_weight}{unit}`, e.g. `12x100g`. When no base weight is found or given (non-food items sold by count, for instance) it is `1x{conversion}`, e.g. `1x800`.
+- **mismatch flag**: raised when the sources for one product disagree, e.g. the description says 100g but a structured column says 200g. It names the fields that conflicted.
+- **conversion parts**: the multipliers the conversion was built from, so `1x2x3x400g` gives `[1.0, 2.0, 3.0]` (the `400g` has become the base weight). Pack words count as `1.0` and `doz` expands to `12.0`, so `5 x doz` gives `[5.0, 12.0]` and a conversion of 60.
+
+Because the same product is described in several places, every field except the pack size is reported as *all distinct values seen*, joined with ` & `. A clean row shows one value per field; a flagged row shows exactly which values collided, which is what makes a mismatch investigable rather than just detectable.
+
+The output ports are:
+
+| Output port | Field | Example |
 |---|---|---|
-| `java_outer_pack_size` | The reconciled pack size, or the mismatch label if the sources disagree | `6x450g` |
+| `java_outer_pack_size` | pack size, or the mismatch label if the sources disagree | `6x450g` |
 | `java_mismatch_flag` | `FALSE`, or which fields disagreed | `MISMATCH (base_weight, total_weight)` |
-| `java_outer_uom` / `java_base_uom` | Derived outer/base units of measure | `CAS` / `EA` |
-| `java_outer_to_base_uom_conversion` | Every distinct conversion seen across the sources | `12` or `6 & 12` |
-| `java_smallest_to_base_uom_conversion` | Every distinct base weight seen | `100 & 200` |
-| `java_smallest_unit_of_measure` | Every distinct unit seen (after standardising) | `g` |
-| `java_total_weight_values_found` | Every distinct total weight seen | `1200 & 2400` |
-| `java_conversion_parts_found` | The raw multiplier parts, e.g. `[2.0, 3.0]` for `2x3x...` | `[2.0, 3.0]` |
-
-The `& `-joined "values found" outputs are what make a mismatch investigable: a data steward can see *which* values collided rather than just that something did.
+| `java_outer_uom` / `java_base_uom` | derived outer/base units of measure (`CAS`/`EA` for a multi-pack, `EA`/`EA` for a single, `KG`/`EA` for catch-weight) | `CAS` / `EA` |
+| `java_outer_to_base_uom_conversion` | conversion, every distinct value seen | `12` or `6 & 12` |
+| `java_smallest_to_base_uom_conversion` | base weight, every distinct value seen | `100 & 200` |
+| `java_smallest_unit_of_measure` | unit, every distinct value seen | `g` |
+| `java_total_weight_values_found` | total weight, every distinct value seen | `1200 & 2400` |
+| `java_conversion_parts_found` | conversion parts, one list per source that had them | `[2.0, 3.0]` |
 
 ## How it works
 
 The pipeline runs in four steps, all in [`informatica/1_helper_code.java`](informatica/1_helper_code.java) and orchestrated per row in [`informatica/2_on_input_row.java`](informatica/2_on_input_row.java).
 
-**1. Clean the text.** Lower-case, strip brackets and commas, collapse whitespace. `Flour (Bread), 16KG` becomes `flour bread 16kg`.
+**1. Clean the text.** Lower-case (so unit detection sees `g`, `ml`, etc.), replace brackets with spaces, remove commas (which appear as thousands separators in some weights), and collapse repeated spaces. `(1 x 4) x 1,000g` becomes `1 x 4 x 1000g`.
 
 **2. Find the pack size.** Twelve regular expressions (`P1` … `P12`) are tried in a fixed order and the first one that matches wins. The order matters because the patterns are nested: `1 x 2 x 400` is a sub-pattern of `1 x 2 x 400g`, so the more specific pattern must be tried first. Each pattern's capture groups are collected into a list, so `2x3x400-500g` becomes `["2", "3", "400-500g"]`.
 
 When only a conversion is found (e.g. `1 x 4` in `apple pies 1 x 4 100g`), a second pass looks for a standalone weight elsewhere in the string so that `100g` isn't lost.
 
-**3. Turn the groups into numbers.** Each group is classified as a multiplier (`2`, `3`, `pack`, `doz`, `pair`), a base weight with a unit (`400-500g`, `33cl`), or something to ignore (`ptn`). Multipliers are multiplied together to get the conversion. Ranges like `400-500g` become their midpoint. Units are standardised to `g`, `ml` or `min` (`kg` → ×1000 `g`, `cl` → ×10 `ml`, `lb` → ×453.1 `g`, and so on). The structured UoM columns go through their own reader, `numericalNormaliser`, which interprets `CAS | 12 | EA | 100 | G` as conversion 12, base weight 100 g.
+**3. Turn the groups into numbers.** Each group is classified as a multiplier (`2`, `3`, `pack`, `doz`, `pair`), a base weight with a unit (`400-500g`, `33cl`), or something to ignore (`ptn`: a portion count describes servings, not a pack level). Multipliers are multiplied together to get the conversion. Ranges like `400-500g` become their midpoint. Units are standardised to `g`, `ml` or `min` (`kg` → ×1000 `g`, `cl` → ×10 `ml`, `lb` → ×453.1 `g`, and so on). The structured UoM columns go through their own reader, `numericalNormaliser`, which interprets `CAS | 12 | EA | 100 | G` as conversion 12, base weight 100 g.
 
-**4. Reconcile and validate.** The values from all four sources are added to distinct sets, one per field (conversion, base weight, unit, total weight). Then the identity
+A number with no unit is always treated as a count, never as a weight. The product range includes non-food items sold by count, so `1 x 2 x 400` means 800 units (a case of two boxes of 400 forks, say), and the output is `1x800`. If a weight is intended, the source must carry the unit.
+
+**4. Reconcile and validate.** The values from all four sources go into distinct sets, one per field (conversion, base weight, unit, total weight). The identity
 
 ```
 total_weight = conversion × base_weight
 ```
 
-is used to fill in anything missing: if a source gave only a total and another gave only a base weight, the conversion is derived, and vice versa. Finally any set with more than one value is a mismatch, and the flag names the fields involved.
+is then used to fill in anything missing: if one source gave only a total (typically `CAS | 1000 | G`, meaning the whole case weighs 1000 g) and another gave only a base weight, the conversion is derived, and vice versa. Finally, any set with more than one value is a mismatch, and the flag names the fields involved. Deriving first and checking second matters: it's how `6 x 500g` in the text gets caught against a structured total of `2500 G`.
 
 ## Examples
 
 Free text only:
 
 ```
-2x3x400-500g      ->  6x450g        (2 × 3 = 6 units; midpoint of 400–500 g)
+800g-1.2kgx2x3    ->  6x1000g       (2 × 3 = 6 units; 800g–1.2kg standardised to grams, midpoint 1000g)
 33cl x 3 x 4      ->  12x330ml      (cl standardised to ml)
 pack of 10        ->  1x10          (a count, no weight)
+1 x 2 x 400       ->  1x800         (no unit, so 400 is a count)
 per kg            ->  1x1000g
 10-15g x 20       ->  20x12.5g
 3 x 4.5 lb        ->  3x2039g
-30cm x 40cm       ->  Not Provided  (dimensions are not a pack size)
-450g              ->  Not Provided  (a weight, but no conversion)
+30cm x 40cm       ->  Not Provided  (dimensions are ignored: they describe the physical size of the pack but say nothing about conversion or weight)
+450g              ->  Not Provided  (the weight is still output, but with no conversion there is no pack size)
 ```
 
 Cross-source validation:
@@ -96,6 +144,16 @@ java -cp out Main
 java -cp out PackSizeTransformationTest
 ```
 
+## Extending it
+
+Suppliers invent new ways of writing the same thing, so the vocabulary is designed to grow. The pattern that isn't matched today, `gloves 100 pcs` (count before the pack word), is an example of the kind of thing you'd add when it shows up in the data.
+
+To add a **unit of measure** (say `kilograms`): add it to the `UOMS` regex so the patterns can see it, to `VALID_UNITS` so step 3 classifies it as a weight, and to `unitCleanse` so it standardises (`kilograms` → ×1000 → `g`). All three are needed; a unit that's only in `UOMS` will be matched but never converted.
+
+To add a **pack word** (say `sleeve`): add it to `R_NUM_REPLACEMENTS`. Pack words carry no weight so nothing else changes.
+
+To add a **new shape of string**: add a pattern to `PACK_PATTERNS`, placing it before any pattern it's a superset of. Then add the string to the tests with its expected groups and run `./run.sh test`.
+
 ## Repository layout
 
 ```
@@ -120,9 +178,7 @@ In CDI the Java transformation has separate tabs. Helper Code holds static metho
 
 These are deliberate scope boundaries of the current version rather than bugs, and are written up here so they can be tackled one at a time with the tests as a safety net.
 
-- Conversion-only strings without a unit are ambiguous: `1 x 2 x 400` yields a conversion of 800, because with no unit on the `400` there is no way to know it was meant as a weight. The pattern order comment in `extractPackSizeGroups` explains why.
-- A count that precedes its pack word (`gloves 100 pcs`, `3 pair`) doesn't match any pattern; the patterns expect `pack of 10` / `10 x pcs` ordering.
-- `ptn` (portion) is deliberately ignored, so `1 x 12 ptn` becomes `1x1`.
-- Range midpoints are used for `400-500g`; a min/max pair might serve some downstream uses better.
-- Ounce, pound, pint and gallon factors are UK values rounded to one decimal place.
+- Values are taken at face value. If a source says a base weight is 3,924,804 kg, that is what comes out; there is no sanity check that the result is a plausible pack. (Whole-number base weights above 2,147,483,647 are also capped at that value by an `int` cast in `normaliseBaseWeight`; harmless for real data, but a one-line fix.)
+- Ranges use the midpoint (`900g-1kg` → 950 g), which loses the spread. For ESG reporting the business preferred the upper bound, on the basis that over-reporting weight is safer than under-reporting; the code can be changed to take the max of the two values instead.
+- Base weights of 1000 or more are rounded to whole numbers; smaller values keep one decimal place, so `12.55g` becomes `12.6g` and `0.5g` stays `0.5g`.
 - Only the first matching pattern is used per string. A string with two independent sizes in it (e.g. a description mentioning both the case and the inner) only contributes the first.
